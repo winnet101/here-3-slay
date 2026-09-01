@@ -1,18 +1,22 @@
 import GameEngine from "./GameEngine";
-import type { Choices } from "./types/choice_types";
+import { ACTIONS, type HereToSlayChoices } from "./types/choice_types";
 import type { Player, PlayerID } from "./types/player_types";
 import type { GameState } from "./types/state_types";
 
-class HereToSlayEngine extends GameEngine<GameState, Player, Choices> {
+class HereToSlayEngine extends GameEngine<
+  GameState,
+  Player,
+  HereToSlayChoices
+> {
   paused = false;
   winner = null;
 
   constructor(
     initialPlayers: { name: string; id: PlayerID }[],
-    validator: <K extends keyof Choices>(
+    validator: <K extends keyof HereToSlayChoices>(
       choice: K,
-      value: Choices[K]
-    ) => boolean
+      value: HereToSlayChoices[K],
+    ) => boolean,
   ) {
     const initialState: Omit<GameState, "players"> = {
       phase: "action",
@@ -27,7 +31,7 @@ class HereToSlayEngine extends GameEngine<GameState, Player, Choices> {
       hand: [],
       board: [],
     }));
-    super({ ...initialState, players }, validator);
+    super({ ...initialState, players });
   }
 
   async gameLoop() {
@@ -45,35 +49,163 @@ class HereToSlayEngine extends GameEngine<GameState, Player, Choices> {
     this.nextPlayer();
   }
 
-  async chooseAction(): Promise<Choices["takeAction"]> {
-    const action = await this.askPlayer("takeAction");
-    if (!action) {
-      return { actionType: "passTurn" };
-    }
-    return action;
+  async chooseAction(): Promise<HereToSlayChoices["takeAction"]> {
+    const action = (await this.askCurrentPlayer("takeAction")) ?? [
+      { actionType: "passTurn" },
+    ];
+
+    return action[0];
   }
 
-  async doAction(action: Choices["takeAction"]) {
+  async doAction(action: HereToSlayChoices["takeAction"]) {
     switch (action.actionType) {
       case "passTurn":
         this.passTurn();
         break;
       case "drawCard":
-        this.drawCard();
+        this.drawCards(this.currentPlayerId);
+        break;
+      case "playCard":
+        const cardIdArr = await this.askCurrentPlayer(
+          "chooseCards",
+          this.currentPlayer.hand.map((c) => c.id),
+        );
+        if (!cardIdArr) return;
+
+        const resolves = await this.doChallenge();
+        if (!resolves) return;
+        this.currentPlayer.board.push(
+          this.currentPlayer.hand.find((c) => c.id === cardIdArr[0])!,
+        );
+        this.currentPlayer.hand.filter((c) => c.id !== cardIdArr[0]);
+
+        await this.doAbility();
+
         break;
     }
   }
+
+  async doChallenge(): Promise<boolean> {
+    const validChallengesMap = new Map<string, string[]>();
+    this.players.forEach((p) => {
+      const challenges = p.hand.filter((c) => c.type === "challenge");
+      validChallengesMap.set(
+        p.id,
+        challenges.map((c) => c.id),
+      );
+    });
+
+    const [challengerId, cardIdArray] =
+      await this.raceAllEnemiesOfCurrentPlayer(
+        "chooseCards",
+        validChallengesMap,
+      );
+    if (!cardIdArray) return true; // No player challenged the card; it resolves
+
+    const challenger = this.getPlayerByID(challengerId);
+    challenger.hand.filter((c) => c.id !== cardIdArray[0]);
+
+    // Todo: store dice rolls in global state?
+    // Ask for a promise so it's interruptible?
+
+    return false;
+  }
+
+  async doAbility() {}
 
   passTurn() {
     this.currentPlayer.actionPoints = 0;
   }
 
-  drawCard(playerID: PlayerID = this.currentPlayer.id) {
+  drawCards(playerID: PlayerID, number = 1) {
     const player = this.getPlayerByID(playerID);
-    if (player && this.state.deck.length > 0) {
+    if (this.state.deck.length > 0) {
       const drawnCard = this.state.deck.pop()!;
       player.hand.push(drawnCard);
     }
+  }
+
+  async sacrificeCards(playerID: PlayerID, number = 1) {
+    const player = this.getPlayerByID(playerID);
+    const cardIds = await this.askCurrentPlayer(
+      "chooseCards",
+      player.board.map((c) => c.id),
+      number,
+    );
+
+    if (!cardIds) return;
+    player.board.filter((card) => !cardIds.includes(card.id));
+  }
+
+  async discardCards(playerID: PlayerID, number = 1) {
+    const player = this.getPlayerByID(playerID);
+    const cardIds = await this.askPlayer(
+      "chooseCards",
+      playerID,
+      player.hand.map((c) => c.id),
+      number,
+    );
+
+    if (!cardIds) return;
+    player.hand.filter((card) => !cardIds.includes(card.id));
+  }
+
+  async playCardDirectly(playerID: PlayerID) {
+    const player = this.getPlayerByID(playerID);
+    const cardId = await this.askPlayer(
+      "chooseCards",
+      playerID,
+      player.hand.map((c) => c.id),
+    );
+
+    if (!cardId) return;
+
+    player.hand.forEach((card, i) => {
+      if (cardId.includes(card.id)) {
+        player.hand.splice(i, 1);
+        // Play card here
+      }
+    });
+  }
+
+  async destroyCards(playerID: PlayerID, number = 1) {
+    const cardIds = await this.askPlayer(
+      "chooseCards",
+      playerID,
+      this.getPlayers().flatMap((player) =>
+        player.board.flatMap((card) => card.id),
+      ),
+      number,
+    );
+
+    if (!cardIds) return;
+
+    this.players.forEach((player) => {
+      player.board.filter((card) => !cardIds.includes(card.id));
+    });
+  }
+
+  async stealCards(playerID: PlayerID, number = 1) {
+    const cardIds = await this.askPlayer(
+      "chooseCards",
+      playerID,
+      this.getPlayers().flatMap((player) =>
+        player.board.flatMap((card) => card.id),
+      ),
+      number,
+    );
+
+    if (!cardIds) return;
+    const actingPlayer = this.getPlayerByID(playerID);
+
+    this.players.forEach((player) => {
+      player.board.forEach((card, i) => {
+        if (cardIds.includes(card.id)) {
+          actingPlayer.board.push(card);
+          player.board.splice(i, 1);
+        }
+      });
+    });
   }
 }
 

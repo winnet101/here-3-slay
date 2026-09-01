@@ -3,7 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
-    "target": "ES2022",
+    "target": "esnext",
     "useDefineForClassFields": true,
     "module": "ESNext",
     "types": ["svelte", "vite/client"],

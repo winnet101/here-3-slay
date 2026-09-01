@@ -11,14 +11,14 @@ const gameEngine = new GameEngine<
   {
     players: [{ id: "player1" }, { id: "player2" }],
   },
-  () => true
+  () => true,
 );
 
 test("getChoice", async () => {
   const choice = gameEngine.makeChoices("number", ["player1", "player2"]);
   setTimeout(() => {
-    gameEngine.resolveChoice("player1", 42);
-    gameEngine.resolveChoice("player2", 7);
+    gameEngine.resolveChoice("player1", "number", [42]);
+    gameEngine.resolveChoice("player2", "number", [7]);
   }, 100);
 
   const results = await choice;
