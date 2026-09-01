@@ -66,18 +66,19 @@ class HereToSlayEngine extends GameEngine<
         this.drawCards(this.currentPlayerId);
         break;
       case "playCard":
-        const cardIdArr = await this.askCurrentPlayer(
+        const cardIdArray = await this.askCurrentPlayer(
           "chooseCards",
           this.currentPlayer.hand.map((c) => c.id),
         );
-        if (!cardIdArr) return;
+        if (!cardIdArray) return;
+        const card = cardIdArray[0];
 
         const resolves = await this.doChallenge();
         if (!resolves) return;
         this.currentPlayer.board.push(
-          this.currentPlayer.hand.find((c) => c.id === cardIdArr[0])!,
+          this.currentPlayer.hand.find((c) => c.id === card)!,
         );
-        this.currentPlayer.hand.filter((c) => c.id !== cardIdArr[0]);
+        this.currentPlayer.hand.filter((c) => c.id !== card);
 
         await this.doAbility();
 
@@ -101,9 +102,10 @@ class HereToSlayEngine extends GameEngine<
         validChallengesMap,
       );
     if (!cardIdArray) return true; // No player challenged the card; it resolves
+    const card = cardIdArray[0];
 
     const challenger = this.getPlayerByID(challengerId);
-    challenger.hand.filter((c) => c.id !== cardIdArray[0]);
+    challenger.hand.filter((c) => c.id !== card);
 
     // Todo: store dice rolls in global state?
     // Ask for a promise so it's interruptible?
