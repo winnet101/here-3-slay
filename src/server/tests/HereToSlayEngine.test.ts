@@ -14,9 +14,9 @@ const initialPlayers = [
 ];
 
 test("Sacrifice", async () => {
-  const engine = new HereToSlayEngine(initialPlayers, () => true);
+  const engine = new HereToSlayEngine(initialPlayers);
   engine
-    .getPlayerByID("1")
+    .getPlayer("1")
     .board.push(
       { name: "cardA", id: "1", type: "hero" },
       { name: "cardB", id: "2", type: "hero" },
@@ -36,10 +36,10 @@ test("Sacrifice", async () => {
   ).toEqual(["1", "3"]);
 });
 
-test("Sacrifice multiple", async () => {
-  const engine = new HereToSlayEngine(initialPlayers, () => true);
+test("Sacrifice multiple cards", async () => {
+  const engine = new HereToSlayEngine(initialPlayers);
   engine
-    .getPlayerByID("1")
+    .getPlayer("1")
     .board.push(
       { name: "cardA", id: "1", type: "hero" },
       { name: "cardB", id: "2", type: "hero" },

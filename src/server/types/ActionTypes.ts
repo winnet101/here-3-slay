@@ -38,4 +38,5 @@ export type ActionData = TargetCardActionData | NoTargetActionData;
 export type HereToSlayChoices = {
   takeAction: ActionData;
   chooseCards: string;
+  chooseModifier: "positive" | "negative";
 };

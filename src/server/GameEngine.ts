@@ -1,7 +1,29 @@
-import ChoiceManager from "./ChoiceManager";
+import ChoiceManager, {
+  type ChoiceDefinition,
+  type KeyOf,
+} from "./ChoiceManager";
 import type { Result } from "./lib/Result";
 import { withTimeout } from "./lib/withTimeout";
-import type { PlayerID } from "./types/player_types";
+import type { Player, PlayerID } from "./types/player_types";
+
+type ChoiceRequest<Choices extends Record<string, unknown>> = {
+  [K in KeyOf<Choices>]: {
+    readonly choice: K;
+    readonly validValueCreator?: (playerID: PlayerID) => Choices[K][];
+    readonly numberOfValues?: number;
+  };
+}[KeyOf<Choices>];
+
+type ResolvedChoiceRequests<
+  Choices extends Record<string, unknown>,
+  Requests extends readonly ChoiceRequest<Choices>[],
+> = {
+  [Index in keyof Requests]: Requests[Index] extends {
+    readonly choice: infer K extends KeyOf<Choices>;
+  }
+    ? Extract<ChoiceDefinition<Choices>, { readonly choice: K }>
+    : never;
+};
 
 class GameEngine<
   S extends object,
@@ -52,7 +74,7 @@ class GameEngine<
     return Array.from(this.players.values());
   }
 
-  getPlayerByID(id: PlayerID): P {
+  getPlayer(id: PlayerID): P {
     try {
       return this.players.get(id)!;
     } catch {
@@ -79,21 +101,27 @@ class GameEngine<
     this.currentIndex = (this.currentIndex + 1) % this.players.size;
   }
 
-  private collectChoices<K extends string & keyof Choices>(
-    choice: K,
-    playerIDs: PlayerID[],
-    validValues?: Map<PlayerID, Choices[K][]>,
-    numberOfValues = 1,
-  ) {
+  protected collectChoices<
+    const Requests extends readonly ChoiceRequest<Choices>[],
+  >(requests: Requests, playerIDs: PlayerID[]) {
     const choicePromises = playerIDs.map((id) => {
-      const choiceManager = this.choiceManagers.get(id);
-      if (!choiceManager)
+      if (!this.choiceManagers.has(id))
         throw new Error(`ChoiceManager not found for player ID: ${id}`);
+
+      // A new prompt replaces any unanswered race or timed-out request.
+      const choiceManager = new ChoiceManager<Choices>();
+      this.choiceManagers.set(id, choiceManager);
 
       return [
         id,
         withTimeout(
-          choiceManager.setChoice(choice, validValues?.get(id), numberOfValues),
+          this.choiceManagers.get(id)!.setChoices(
+            requests.map(({ choice, validValueCreator, numberOfValues }) => ({
+              choice,
+              validValues: validValueCreator?.(id),
+              numberOfValues,
+            })),
+          ),
           this.defaultTimeoutMs,
         ),
       ] as const;
@@ -106,20 +134,20 @@ class GameEngine<
    * @param playerIDs Roster of players to make the choice
    * @returns A map containing the ID of each player and their choice
    */
-  async makeChoices<K extends string & keyof Choices>(
+  async ask<K extends string & keyof Choices>(
     choice: K,
     playerIDs: PlayerID[],
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
     const choicePromises = this.collectChoices(
-      choice,
+      [{ choice, validValueCreator, numberOfValues }],
       playerIDs,
-      validValues,
-      numberOfValues,
     );
     const results = await Promise.all(
-      choicePromises.map(async ([id, prom]) => [id, await prom] as const),
+      choicePromises.map(
+        async ([id, prom]) => [id, (await prom)?.[choice]] as const,
+      ),
     );
     return new Map(results);
   }
@@ -129,33 +157,33 @@ class GameEngine<
    * @param playerIDs Roster of players to make the choice
    * @returns A tuple containing the ID of the player who responded first and their choice
    */
-  async raceChoice<K extends string & keyof Choices>(
+  async race<K extends string & keyof Choices>(
     choice: K,
     playerIDs: PlayerID[],
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
     const choicePromises = this.collectChoices(
-      choice,
+      [{ choice, validValueCreator, numberOfValues }],
       playerIDs,
-      validValues,
-      numberOfValues,
     );
     const result = await Promise.race(
-      choicePromises.map(async ([id, prom]) => [id, await prom] as const),
+      choicePromises.map(
+        async ([id, prom]) => [id, (await prom)?.[choice]] as const,
+      ),
     );
     return result;
   }
 
   async askAll<K extends string & keyof Choices>(
     choice: K,
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
-    return await this.makeChoices(
+    return await this.ask(
       choice,
       this.playerOrder,
-      validValues,
+      validValueCreator,
       numberOfValues,
     );
   }
@@ -163,27 +191,22 @@ class GameEngine<
   async askAllEnemies<K extends string & keyof Choices>(
     choice: K,
     ofPlayerID: PlayerID,
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
     const enemyIDs = this.playerOrder.filter((id) => id !== ofPlayerID);
-    return await this.makeChoices(
-      choice,
-      enemyIDs,
-      validValues,
-      numberOfValues,
-    );
+    return await this.ask(choice, enemyIDs, validValueCreator, numberOfValues);
   }
 
   async askAllEnemiesOfCurrentPlayer<K extends string & keyof Choices>(
     choice: K,
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
     return await this.askAllEnemies(
       choice,
       this.currentPlayer.id,
-      validValues,
+      validValueCreator,
       numberOfValues,
     );
   }
@@ -194,10 +217,10 @@ class GameEngine<
     validValues?: Choices[K][],
     numberOfValues = 1,
   ) {
-    const choices = await this.makeChoices(
+    const choices = await this.ask(
       choice,
       [playerID],
-      validValues ? new Map([[playerID, validValues]]) : undefined,
+      validValues ? () => validValues : undefined,
       numberOfValues,
     );
     return choices.get(this.currentPlayer.id);
@@ -218,13 +241,13 @@ class GameEngine<
 
   async raceAll<K extends string & keyof Choices>(
     choice: K,
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
-    return await this.raceChoice(
+    return await this.race(
       choice,
       this.playerOrder,
-      validValues,
+      validValueCreator,
       numberOfValues,
     );
   }
@@ -232,22 +255,22 @@ class GameEngine<
   async raceAllEnemies<K extends string & keyof Choices>(
     choice: K,
     playerID: PlayerID,
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
     const enemyIDs = this.playerOrder.filter((id) => id !== playerID);
-    return await this.raceChoice(choice, enemyIDs, validValues, numberOfValues);
+    return await this.race(choice, enemyIDs, validValueCreator, numberOfValues);
   }
 
   async raceAllEnemiesOfCurrentPlayer<K extends string & keyof Choices>(
     choice: K,
-    validValues?: Map<PlayerID, Choices[K][]>,
+    validValueCreator?: (currentID: PlayerID) => Choices[K][],
     numberOfValues = 1,
   ) {
     return await this.raceAllEnemies(
       choice,
       this.currentPlayer.id,
-      validValues,
+      validValueCreator,
       numberOfValues,
     );
   }
@@ -258,10 +281,10 @@ class GameEngine<
     values: Choices[K][],
   ): Result {
     const choiceManager = this.choiceManagers.get(playerID);
-    if (!choiceManager) {
+    if (!choiceManager)
       throw new Error(`ChoiceManager not found for player ID: ${playerID}`);
-    }
-    return this.choiceManagers.get(playerID)!.resolveChoice(choice, values);
+
+    return choiceManager.resolveChoice(choice, values);
   }
 }
 

@@ -4,7 +4,7 @@ function wait(ms: number): Promise<void> {
 
 async function withTimeout<T>(
   promise: Promise<T>,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<T | undefined> {
   if (timeoutMs <= 0) {
     return promise;

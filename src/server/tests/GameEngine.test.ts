@@ -7,32 +7,29 @@ const gameEngine = new GameEngine<
   {
     number: number;
   }
->(
-  {
-    players: [{ id: "player1" }, { id: "player2" }],
-  },
-  () => true,
-);
+>({
+  players: [{ id: "player1" }, { id: "player2" }],
+});
 
 test("getChoice", async () => {
-  const choice = gameEngine.makeChoices("number", ["player1", "player2"]);
+  const choice = gameEngine.ask("number", ["player1", "player2"]);
   setTimeout(() => {
     gameEngine.resolveChoice("player1", "number", [42]);
     gameEngine.resolveChoice("player2", "number", [7]);
   }, 100);
 
   const results = await choice;
-  expect(results).toEqual([
-    ["player1", 42],
-    ["player2", 7],
+  expect(Array.from(results)).toEqual([
+    ["player1", [42]],
+    ["player2", [7]],
   ]);
 });
 
 test("raceChoice", async () => {
-  const choice = gameEngine.raceChoice("number", ["player1", "player2"]);
+  const choice = gameEngine.race("number", ["player1", "player2"]);
   setTimeout(() => {
-    gameEngine.resolveChoice("player2", 7);
-    gameEngine.resolveChoice("player1", 42);
+    gameEngine.resolveChoice("player2", "number", [7]);
+    gameEngine.resolveChoice("player1", "number", [42]);
   }, 100);
 
   const [id, result] = await choice;
@@ -42,9 +39,9 @@ test("raceChoice", async () => {
 
 test("timeout", async () => {
   gameEngine.defaultTimeoutMs = 100;
-  const choice = gameEngine.makeChoices("number", ["player1", "player2"]);
+  const choice = gameEngine.ask("number", ["player1", "player2"]);
   setTimeout(() => {
-    gameEngine.resolveChoice("player1", 42);
+    gameEngine.resolveChoice("player1", "number", [42]);
   }, 50);
 
   const [[id1, res1], [id2, res2]] = await choice;

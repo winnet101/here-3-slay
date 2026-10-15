@@ -1,7 +1,22 @@
-interface Card {
+export interface BaseCard {
   name: string;
   id: string;
-  type: "challenge" | "hero";
+  type: "challenge" | "hero" | "modifier";
 }
 
-export type { Card };
+interface ModifierCard extends BaseCard {
+  type: "modifier";
+  positive: number;
+  negative: number;
+  effect?: undefined;
+}
+
+interface ChallengeCard extends BaseCard {
+  type: "challenge";
+}
+
+interface HeroCard extends BaseCard {
+  type: "hero";
+}
+
+export type Card = ModifierCard | ChallengeCard | HeroCard;
